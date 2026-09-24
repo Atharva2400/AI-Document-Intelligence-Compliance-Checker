@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.py[cod]
+.env
+uploads/*
+!uploads/.gitkeep
+.DS_Store
+*.egg-info/
+dist/
+build/
+# Uploaded documents - never commit
+Backend/uploads/*
+!Backend/uploads/.gitkeep
