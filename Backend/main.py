@@ -6,6 +6,7 @@ AI Document Intelligence — FastAPI entry point.
 Routes
 ------
 GET  /api/health                  → server health check
+GET  /api/gemini/test             → test Gemini Express Mode connection
 POST /api/analyze                 → upload & analyze a document
 GET  /api/demo/{document_type}    → pre-built mock analysis for employment | nda | vendor
 
@@ -34,6 +35,10 @@ from services.document_service import (
     SUPPORTED_DEMO_TYPES,
 )
 
+# Gemini Express Mode service
+from services.gemini_service import test_gemini
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Load environment variables from .env (if it exists)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -49,6 +54,7 @@ ALLOWED_ORIGINS: list[str] = [
     if o.strip()
 ]
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # App
 # ─────────────────────────────────────────────────────────────────────────────
@@ -58,15 +64,17 @@ app = FastAPI(
     description=(
         "Backend for the AI Document Intelligence & Compliance Checker.\n\n"
         "**Phase 1** — mock analysis only.\n"
-        "**Phase 2** — will connect to Google Cloud Storage + Vertex AI + Compliance Engine."
+        "**Phase 2** — Gemini Express Mode integration + "
+        "Compliance Engine."
     ),
     version="1.0.0",
     docs_url="/docs",
     redoc_url="/redoc",
 )
 
+
 # ─────────────────────────────────────────────────────────────────────────────
-# CORS — allow the React dev server (and any production origin you add later)
+# CORS — allow the React dev server
 # ─────────────────────────────────────────────────────────────────────────────
 
 app.add_middleware(
@@ -76,6 +84,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Global exception handler — returns a clean JSON error envelope
@@ -116,11 +125,43 @@ async def generic_exception_handler(request, exc: Exception):
 )
 async def health_check():
     """
-    Returns `{"status": "ok"}` when the server is running.
-    Use this to confirm the backend is reachable from the frontend.
+    Returns {"status": "ok"} when the server is running.
     """
     return HealthResponse()
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gemini Express Mode test
+# ─────────────────────────────────────────────────────────────────────────────
+
+@app.get(
+    "/api/gemini/test",
+    summary="Test Gemini connection",
+    tags=["Gemini"],
+)
+async def gemini_test():
+    """
+    Tests the connection between the FastAPI backend
+    and Google Gemini Agent Platform Express Mode.
+    """
+    try:
+        result = test_gemini()
+
+        return {
+            "success": True,
+            "message": result,
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Document analysis
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.post(
     "/api/analyze",
@@ -129,25 +170,31 @@ async def health_check():
     tags=["Analysis"],
 )
 async def analyze_document(
-    file: UploadFile = File(..., description="PDF, DOCX or TXT file to analyze"),
+    file: UploadFile = File(
+        ...,
+        description="PDF, DOCX or TXT file to analyze",
+    ),
 ):
     """
-    **Upload a document and receive a full compliance analysis.**
+    Upload a document and receive a full compliance analysis.
 
-    Steps performed (Phase 1 = mock):
-    1. Validate file type (PDF / DOCX / TXT) and size (≤ 50 MB)
-    2. Save temporarily to `uploads/`
-    3. Detect document type from filename
-    4. Return realistic mock analysis data
+    Current implementation:
+    - Validate file type
+    - Validate file size
+    - Save document to uploads/
+    - Detect document type
+    - Return mock analysis data
 
-    **Phase 2** will replace step 3-4 with:
-    - Google Cloud Storage upload
-    - Vertex AI / Gemini document classification & extraction
-    - Compliance & Risk Engine evaluation
+    Gemini integration is currently tested separately
+    through /api/gemini/test.
     """
     result = analyze_uploaded_document(file)
     return result
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Demo analysis
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get(
     "/api/demo/{document_type}",
@@ -159,18 +206,20 @@ async def demo_analysis(
     document_type: str,
 ):
     """
-    **Returns pre-built analysis without requiring a file upload.**
+    Returns pre-built analysis without requiring a file upload.
 
-    Supported `document_type` values:
-    - `employment` — Employment Agreement
-    - `nda` — Non-Disclosure Agreement
-    - `vendor` — Vendor / Service Agreement
-
-    Useful for frontend demos, testing the UI, and integration testing.
+    Supported document_type values:
+    - employment
+    - nda
+    - vendor
     """
     result = get_demo_analysis(document_type)
     return result
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Demo types
+# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get(
     "/api/demo-types",
@@ -178,7 +227,10 @@ async def demo_analysis(
     tags=["Analysis"],
 )
 async def list_demo_types():
-    """Returns the list of document types supported by GET /api/demo/{document_type}."""
+    """
+    Returns the document types supported by
+    GET /api/demo/{document_type}.
+    """
     return {
         "demo_types": SUPPORTED_DEMO_TYPES,
         "description": {
@@ -190,7 +242,7 @@ async def list_demo_types():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Dev entry point  (python main.py)
+# Dev entry point (python main.py)
 # ─────────────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -198,4 +250,10 @@ if __name__ == "__main__":
 
     host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run("main:app", host=host, port=port, reload=True)
+
+    uvicorn.run(
+        "main:app",
+        host=host,
+        port=port,
+        reload=True,
+    )
