@@ -178,15 +178,12 @@ async def analyze_document(
     """
     Upload a document and receive a full compliance analysis.
 
-    Current implementation:
-    - Validate file type
-    - Validate file size
+    Implementation:
+    - Validate file extension and size
     - Save document to uploads/
-    - Detect document type
-    - Return mock analysis data
-
-    Gemini integration is currently tested separately
-    through /api/gemini/test.
+    - Extract text from PDF, DOCX, or TXT
+    - Send extracted text to Gemini AI for analysis
+    - Return structured AnalysisResponse matching frontend schema
     """
     result = analyze_uploaded_document(file)
     return result
