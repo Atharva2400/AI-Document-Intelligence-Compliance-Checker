@@ -120,6 +120,9 @@ class AnalysisResponse(BaseModel):
     processing_time_ms: int
     analyzed_at: str
 
+    # ── Storage metadata (optional, additive — does not affect frontend fields) ──
+    storage: Optional[Dict[str, Any]] = None
+
 
 class ErrorResponse(BaseModel):
     """Standard error envelope."""

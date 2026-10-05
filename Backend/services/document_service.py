@@ -19,6 +19,7 @@ from fastapi import UploadFile, HTTPException
 from data.mock_analysis import MOCK_DATA, SUPPORTED_DEMO_TYPES
 from services.gemini_service import analyze_document_with_gemini
 from services.compliance_service import evaluate_compliance
+from services.storage_service import upload_to_supabase
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -341,21 +342,30 @@ def _build_mock_response(doc_type: str, document_name: str) -> dict:
 def analyze_uploaded_document(file: UploadFile) -> dict:
     """
     Full processing pipeline for a user-uploaded document:
-      1. Validate extension
-      2. Validate size
-      3. Save to uploads/
+      1. Validate extension & size
+      2. Save to local uploads/
+      3. Upload original to Supabase Storage (if SUPABASE_ENABLED=true, non-blocking)
       4. Extract text (PDF, DOCX, TXT)
       5. Send extracted text to Gemini for analysis
       6. Convert Gemini result + evaluate Python Compliance Engine
+      7. Return combined response (with optional storage metadata)
     """
     _validate_extension(file.filename or "unknown")
     _validate_size(file)
 
     start_ms = time.monotonic()
 
+    # Step 2 — save locally (existing behaviour, unchanged)
     saved_path = _save_file(file)
+
+    # Step 3 — upload original to Supabase (non-blocking; never crashes the pipeline)
+    unique_filename = saved_path.name        # e.g. "20261005_123456_employee_bond.pdf"
+    storage_meta = upload_to_supabase(saved_path, unique_filename)
+
+    # Step 4 — extract text (existing behaviour, unchanged)
     extracted_text = _extract_text(saved_path)
 
+    # Step 5 — Gemini analysis (existing behaviour, unchanged)
     try:
         gemini_result = analyze_document_with_gemini(extracted_text)
     except Exception as e:
@@ -365,7 +375,12 @@ def analyze_uploaded_document(file: UploadFile) -> dict:
         )
 
     elapsed_ms = int((time.monotonic() - start_ms) * 1000)
+
+    # Step 6 — convert + compliance engine (existing behaviour, unchanged)
     response = _convert_gemini_to_analysis_response(gemini_result, file.filename or saved_path.name, elapsed_ms)
+
+    # Step 7 — attach optional storage metadata (additive only, does not rename/remove existing fields)
+    response["storage"] = storage_meta
 
     return response
 
