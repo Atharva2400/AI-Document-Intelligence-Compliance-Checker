@@ -18,9 +18,20 @@ Backend/
 ├── models/
 │   └── schemas.py            ← Pydantic request / response models
 ├── services/
-│   └── document_service.py   ← Business logic (validation, file save, analysis)
+│   ├── document_service.py   ← Business logic (validation, file save, analysis)
+│   ├── gemini_service.py     ← Google Gemini API extraction integration
+│   └── compliance_service.py ← Custom Python Compliance Rule Engine
 └── data/
     └── mock_analysis.py      ← Realistic mock data for all 3 document types
+
+---
+
+## Compliance Engine
+
+- **Gemini performs extraction**: Gemini analyzes raw text and returns structured fields, clauses, and contradictions.
+- **Python performs deterministic compliance checks**: `compliance_service.py` evaluates document-specific compliance rules (Employment, NDA, Vendor).
+- **Rules return PASS / WARNING / FAIL**: Each rule outputs a status, severity (Low, Medium, High, Critical), evidence, and recommendation.
+- **Compliance score is calculated by Python**: A transparent formula calculates the 0-100 score (PASS = 100%, WARNING = 50%, FAIL = 0%).
 ```
 
 ---

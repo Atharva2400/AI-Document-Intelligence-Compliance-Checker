@@ -146,7 +146,7 @@ async def gemini_test():
     """
     try:
         result = test_gemini()
-
+`
         return {
             "success": True,
             "message": result,

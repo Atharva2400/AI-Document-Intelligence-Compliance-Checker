@@ -18,6 +18,7 @@ from fastapi import UploadFile, HTTPException
 
 from data.mock_analysis import MOCK_DATA, SUPPORTED_DEMO_TYPES
 from services.gemini_service import analyze_document_with_gemini
+from services.compliance_service import evaluate_compliance
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Constants
@@ -120,7 +121,8 @@ def _extract_text(file_path: Path) -> str:
 
 def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, elapsed_ms: int) -> dict:
     """
-    Converts Gemini output format into the AnalysisResponse JSON structure.
+    Converts Gemini output format into the AnalysisResponse JSON structure,
+    merging the results of the Python Compliance Rule Engine.
     """
     doc_type = gemini_data.get("document_type") or "Document"
     confidence = gemini_data.get("confidence", 85)
@@ -151,7 +153,7 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
                     "status": str(item.get("status", "found"))
                 })
 
-    # 2. Clauses
+    # 2. Clauses & Missing Clauses
     clauses = []
     raw_clauses = gemini_data.get("clauses") or []
     if isinstance(raw_clauses, list):
@@ -167,9 +169,9 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
                     "detail": str(c.get("detail", ""))
                 })
 
-    raw_missing = gemini_data.get("missing_clauses") or []
-    if isinstance(raw_missing, list):
-        for c in raw_missing:
+    missing_clauses = gemini_data.get("missing_clauses") or []
+    if isinstance(missing_clauses, list):
+        for c in missing_clauses:
             if isinstance(c, dict):
                 clauses.append({
                     "name": str(c.get("name", "Missing Clause")),
@@ -178,27 +180,32 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
                     "detail": str(c.get("detail", ""))
                 })
 
-    # 3. Compliance Rules (Findings)
-    compliance_rules = []
-    raw_findings = gemini_data.get("findings") or []
-    if isinstance(raw_findings, list):
-        for idx, f in enumerate(raw_findings, 1):
-            if isinstance(f, dict):
-                st = str(f.get("status", "warning")).lower()
-                if st not in ["pass", "warning", "fail"]:
-                    st = "warning"
-                sev = str(f.get("severity", "MEDIUM")).upper()
-                if sev not in ["CRITICAL", "HIGH", "MEDIUM", "LOW"]:
-                    sev = "MEDIUM"
-                compliance_rules.append({
-                    "id": str(f.get("id", f"CR-{idx:03d}")),
-                    "rule": str(f.get("rule", f.get("name", "Compliance Check"))),
-                    "category": str(f.get("category", "General")),
-                    "status": st,
-                    "severity": sev,
-                    "evidence": str(f.get("evidence", "N/A")),
-                    "recommendation": str(f.get("recommendation", "Review clause."))
-                })
+    findings = gemini_data.get("findings") or []
+
+    # 3. Python Compliance Rule Engine
+    try:
+        comp_result = evaluate_compliance(
+            document_type=doc_type,
+            extracted_information=extracted_information,
+            clauses=clauses
+        )
+        compliance_score = comp_result["compliance_score"]
+        compliance_status = comp_result["compliance_status"]
+        compliance_rules = comp_result["compliance_rules"]
+        compliance_summary = comp_result["summary"]
+        comp_total_issues = comp_result["total_issues"]
+        comp_critical_issues = comp_result["critical_issues"]
+        risk_level = comp_result["risk_level"]
+        risk_score = comp_result["risk_score"]
+    except Exception as e:
+        compliance_score = None
+        compliance_status = "UNAVAILABLE"
+        compliance_rules = []
+        compliance_summary = f"Compliance engine error: {str(e)}"
+        comp_total_issues = 0
+        comp_critical_issues = 0
+        risk_level = "UNKNOWN"
+        risk_score = 0
 
     # 4. Contradictions
     contradictions = []
@@ -257,27 +264,9 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
                     "action": str(r.get("action", ""))
                 })
 
-    # Metrics
-    critical_count = sum(1 for item in compliance_rules + contradictions + recommendations if item.get("severity") == "CRITICAL")
-    high_count = sum(1 for item in compliance_rules + contradictions + recommendations if item.get("severity") == "HIGH")
-    fail_count = sum(1 for c in clauses if c.get("status") == "fail") + sum(1 for r in compliance_rules if r.get("status") == "fail") + len(contradictions)
-    warning_count = sum(1 for c in clauses if c.get("status") == "warning") + sum(1 for r in compliance_rules if r.get("status") == "warning")
-
-    total_issues = len(contradictions) + sum(1 for c in clauses if c.get("status") in ["warning", "fail"]) + sum(1 for r in compliance_rules if r.get("status") in ["warning", "fail"])
-    critical_issues = critical_count
-
-    deductions = (critical_count * 20) + (high_count * 10) + (fail_count * 10) + (warning_count * 5)
-    compliance_score = max(0, 100 - deductions)
-    risk_score = min(100, max(0, 100 - compliance_score))
-
-    if critical_issues > 0 or risk_score >= 75:
-        risk_level = "CRITICAL"
-    elif high_count > 0 or risk_score >= 50:
-        risk_level = "HIGH"
-    elif total_issues > 0 or risk_score >= 25:
-        risk_level = "MEDIUM"
-    else:
-        risk_level = "LOW"
+    # Deterministic Issue Counts
+    total_issues = comp_total_issues + len(contradictions)
+    critical_issues = comp_critical_issues + sum(1 for c in contradictions if c.get("severity") in ["CRITICAL", "Critical"])
 
     tags = [doc_type]
     dt_lower = doc_type.lower()
@@ -297,8 +286,12 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
         "tags": list(dict.fromkeys(tags)),
         "extracted_information": extracted_information,
         "clauses": clauses,
+        "missing_clauses": missing_clauses,
+        "findings": findings,
         "compliance_score": compliance_score,
+        "compliance_status": compliance_status,
         "compliance_rules": compliance_rules,
+        "compliance_summary": compliance_summary,
         "contradictions": contradictions,
         "risk_level": risk_level,
         "risk_score": risk_score,
@@ -312,11 +305,32 @@ def _convert_gemini_to_analysis_response(gemini_data: dict, document_name: str, 
 
 def _build_mock_response(doc_type: str, document_name: str) -> dict:
     """
-    Deep-copy the mock payload, inject real-time metadata, and return it.
+    Deep-copy the mock payload, run Python Compliance Rule Engine, inject real-time metadata, and return it.
     """
     payload = copy.deepcopy(MOCK_DATA[doc_type])
     payload["document_name"] = document_name
     payload["analyzed_at"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+
+    # Evaluate using Python Compliance Rule Engine
+    try:
+        comp_result = evaluate_compliance(
+            document_type=payload.get("document_type", doc_type),
+            extracted_information=payload.get("extracted_information", []),
+            clauses=payload.get("clauses", [])
+        )
+        payload["compliance_score"] = comp_result["compliance_score"]
+        payload["compliance_status"] = comp_result["compliance_status"]
+        payload["compliance_rules"] = comp_result["compliance_rules"]
+        payload["compliance_summary"] = comp_result["summary"]
+        payload["total_issues"] = comp_result["total_issues"]
+        payload["critical_issues"] = comp_result["critical_issues"]
+        payload["risk_level"] = comp_result["risk_level"]
+        payload["risk_score"] = comp_result["risk_score"]
+    except Exception as e:
+        payload["compliance_score"] = None
+        payload["compliance_status"] = "UNAVAILABLE"
+        payload["compliance_summary"] = f"Compliance engine error: {str(e)}"
+
     return payload
 
 
@@ -332,7 +346,7 @@ def analyze_uploaded_document(file: UploadFile) -> dict:
       3. Save to uploads/
       4. Extract text (PDF, DOCX, TXT)
       5. Send extracted text to Gemini for analysis
-      6. Convert Gemini result into AnalysisResponse JSON format
+      6. Convert Gemini result + evaluate Python Compliance Engine
     """
     _validate_extension(file.filename or "unknown")
     _validate_size(file)

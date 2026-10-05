@@ -30,11 +30,14 @@ class ClauseResult(BaseModel):
 
 class ComplianceRule(BaseModel):
     """One compliance rule check with evidence and severity."""
+    rule_id: Optional[str] = None
     id: str
+    rule_name: Optional[str] = None
     rule: str
-    category: str
-    status: str = Field(..., description="pass | warning | fail")
-    severity: str = Field(..., description="CRITICAL | HIGH | MEDIUM | LOW")
+    description: Optional[str] = None
+    category: str = "Compliance"
+    status: str = Field(..., description="PASS | WARNING | FAIL or pass | warning | fail")
+    severity: str = Field(..., description="Low | Medium | High | Critical or CRITICAL | HIGH | MEDIUM | LOW")
     evidence: str
     recommendation: str
 
@@ -93,12 +96,16 @@ class AnalysisResponse(BaseModel):
     extracted_information: List[ExtractedField]
     clauses: List[ClauseResult]
 
-    # ── Compliance ──
-    compliance_score: int = Field(..., ge=0, le=100)
-    compliance_rules: List[ComplianceRule]
+    # ── Compliance Engine ──
+    compliance_score: Optional[int] = Field(default=None, ge=0, le=100)
+    compliance_status: Optional[str] = Field(default="PASS")
+    compliance_rules: List[ComplianceRule] = []
+    compliance_summary: Optional[str] = Field(default=None)
 
-    # ── Contradictions ──
-    contradictions: List[Contradiction]
+    # ── Gemini / Extra content ──
+    missing_clauses: Optional[List[Dict[str, Any]]] = []
+    contradictions: List[Contradiction] = []
+    findings: Optional[List[Dict[str, Any]]] = []
 
     # ── Risk ──
     risk_level: str = Field(..., description="LOW | MEDIUM | HIGH | CRITICAL")
